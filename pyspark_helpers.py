@@ -26,8 +26,9 @@ def initspark(appname = "Test", servername = "local", cassandra="127.0.0.1", mon
     print ('pyspark initialized')
     return sc, spark, conf
 
-if __name__ == '__main__':
-    sc, spark, conf = initspark()
+def display(df, limit = 10):
+    from IPython.display import display    
+    display(df.limit(limit).toPandas())
 
 def drop_columns(df, collist):
     return df.select([c for c in df.columns if c not in collist])
@@ -56,32 +57,6 @@ def scatter_matrix(df, numeric_features):
         h = axs[n-1, i]
         h.xaxis.label.set_rotation(90)
         h.set_xticks(())
-
-def fix_categorical_data(df, categorical_features, target_col, numeric_features = []):
-    from pyspark.ml.feature import OneHotEncoderEstimator, StringIndexer, VectorAssembler, StringIndexerModel
-    from pyspark.ml import Pipeline
-
-    stages = []
-
-    for c in categorical_features:
-        stringIndexer = StringIndexer(inputCol = c, outputCol = c + '_Index')
-        encoder = OneHotEncoderEstimator(inputCols=[stringIndexer.getOutputCol()], outputCols=[c + "_classVec"])
-        stages += [stringIndexer, encoder]
-
-    label_stringIdx = StringIndexer(inputCol = target_col, outputCol = 'label')
-    stages += [label_stringIdx]
-
-    assemblerInputs = [c + "_classVec" for c in categorical_features] + numeric_features
-    assembler = VectorAssembler(inputCols=assemblerInputs, outputCol="features")
-    stages += [assembler]
-
-    cols = df.columns
-    pipeline = Pipeline(stages = stages)
-    pipelineModel = pipeline.fit(df)
-    dfx = pipelineModel.transform(df)
-    dfx = dfx.select(['label', 'features'] + cols)
-    catindexes = {x.getOutputCol() : x.labels for x in pipelineModel.stages if isinstance(x, StringIndexerModel)}
-    return dfx, catindexes
 
 def beta_coefficients(model):
     import matplotlib.pyplot as plt
@@ -246,6 +221,35 @@ def MakeMLDataFrame(df, categorical_features, numeric_features, target_label = N
        df3 =  AssembleFeatures(df2, categorical_features, numeric_features)
     return df3
 
-def display(df, limit = 10):
-    from IPython.display import display    
-    display(df.limit(limit).toPandas())
+#def fix_categorical_data(df, categorical_features, target_col, numeric_features = []):
+
+def MakeMLDataFramePipeline(df, categorical_features, numeric_features, target_label = None, target_is_categorical = True):
+    from pyspark.ml.feature import OneHotEncoderEstimator, StringIndexer, VectorAssembler, StringIndexerModel
+    from pyspark.ml import Pipeline
+
+    stages = []
+
+    for c in categorical_features:
+        stringIndexer = StringIndexer(inputCol = c, outputCol = c + '_Index')
+        encoder = OneHotEncoderEstimator(inputCols=[stringIndexer.getOutputCol()], outputCols=[c + "_classVec"])
+        stages += [stringIndexer, encoder]
+        
+    if target_is_categorical:
+        label_stringIdx = StringIndexer(inputCol = target_col, outputCol = 'label')
+        stages += [label_stringIdx]
+
+    assemblerInputs = [c + "_classVec" for c in categorical_features] + numeric_features
+    assembler = VectorAssembler(inputCols=assemblerInputs, outputCol="features")
+    stages += [assembler]
+
+    pipeline = Pipeline(stages = stages)
+
+    dfML = pipeline.fit(df).transform(df)
+    #dfx = dfx.select(['label', 'features'] + cols)
+    catindexes = {x.getOutputCol() : x.labels for x in dfML.stages if isinstance(x, StringIndexerModel)}
+    return dfx, catindexes
+
+
+if __name__ == '__main__':
+    sc, spark, conf = initspark()
+
