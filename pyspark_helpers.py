@@ -235,7 +235,7 @@ def MakeMLDataFramePipeline(df, categorical_features, numeric_features, target_l
         stages += [stringIndexer, encoder]
         
     if target_is_categorical:
-        label_stringIdx = StringIndexer(inputCol = target_col, outputCol = 'label')
+        label_stringIdx = StringIndexer(inputCol = target_label, outputCol = 'label')
         stages += [label_stringIdx]
 
     assemblerInputs = [c + "_classVec" for c in categorical_features] + numeric_features
@@ -246,9 +246,8 @@ def MakeMLDataFramePipeline(df, categorical_features, numeric_features, target_l
 
     dfML = pipeline.fit(df).transform(df)
     #dfx = dfx.select(['label', 'features'] + cols)
-    catindexes = {x.getOutputCol() : x.labels for x in dfML.stages if isinstance(x, StringIndexerModel)}
-    return dfx, catindexes
-
+    #catindexes = {x.getOutputCol() : x.labels for x in dfML.stages if isinstance(x, StringIndexerModel)}
+    return dfML 
 
 if __name__ == '__main__':
     sc, spark, conf = initspark()
