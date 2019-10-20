@@ -42,7 +42,7 @@ def auto_categorical_features(df):
     return categorical_features
 
 def describe_numeric_features(df, numeric_features):
-    print(df.select(numeric_features).describe().toPandas())
+    return df.select(numeric_features).describe()
 
 def scatter_matrix(df, numeric_features):
     import pandas as pd
@@ -93,8 +93,8 @@ def evaluate_ROC(predictions):
 
 def show_predictions(predictions, limit = 20):
     print('Test Area Under ROC {}'.format(evaluate_ROC(predictions)))
-    predictions.groupBy('prediction').count().show()
     predictions.select('label', 'rawPrediction', 'prediction', 'probability').show(limit)
+    predictions.groupBy('prediction').count().show()
 
 def collect_tuple(df):
     return [tuple(row) if len(tuple(row)) > 1 else tuple(row)[0] for row in df.collect()]
@@ -104,7 +104,10 @@ def collect_dict(df):
 
 def cm_percent(cm, length, legend = True):
     import numpy as np
-    x = np.ndarray(shape = (2,2),                       buffer = np.array([100 *(cm[0][0] + cm[1][1])/length,                       100 * cm[0][1]/length, 100 * cm[1][0]/length,                       100 * (cm[1][0] + cm[0][1])/length]))
+    x = np.ndarray(shape = (2,2), \
+                      buffer = np.array([100 *(cm[0][0] + cm[1][1])/length, \
+                      100 * cm[0][1]/length, 100 * cm[1][0]/length, \
+                      100 * (cm[1][0] + cm[0][1])/length]))
     return x
 
 def evaluate_model(model):
@@ -158,6 +161,12 @@ def evaluate_predictions(predictions, show = True):
     if show:
         show_predictions(predictions)
 
+        print ('Confusion Matrix')
+        print (' TP', 'FN\n', 'FP', 'TN')
+        print (log['cm'])
+        print (' PC', 'FN\n', 'FP', 'PW')
+        print (log['cmpercent'])
+        print ('')
         print("Area under ROC = {}".format(log['auroc']))
         print("Area under AUPR = {}".format(log['aupr']))
         print('\nOverall\ntprecision = {}\nrecall = {}\nF1 Measure = {}\n'.format( 
@@ -166,17 +175,12 @@ def evaluate_predictions(predictions, show = True):
         for x in sorted(distinctPredictions):
             print('Label {}\ntprecision = {}\nrecall = {}\nF1 Measure = {}\n'.format( 
                   x, log[x]['precision'], log[x]['recall'], log[x]['F1 Measure']))
-        
-        print ('Confusion Matrix')
-        print (log['cm'])
-        print (' PC', 'FP\n', 'FN', 'PW')
-        print (log['cmpercent'])
 
     return log    
 
-def predict_and_evaluate(model, test, show = True):
+def predict_and_evaluate(model, test, show = True, showModel = True):
     predictions = model.transform(test)
-    if show:
+    if showModel:
         evaluate_model(model)
     log = evaluate_predictions(predictions, show)
     return (predictions, log)
