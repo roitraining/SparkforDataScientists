@@ -1,5 +1,5 @@
 #! /bin/sh
-rm ~/file1.txt
+rm -r ~/file1.txt
 rm -r ~/ROI/Spark/__pycache__
 rm -r ~/ROI/Spark/bank_csv_*
 rm -r ~/ROI/Spark/CreditCard.json
