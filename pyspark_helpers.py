@@ -137,7 +137,7 @@ def evaluate_predictions(predictions, show = True):
     log['aupr'] = evaluator.evaluate(predictions)
 
     # Metrics
-    predictionRDD = predictions.select(['label', 'prediction'])                    .rdd.map(lambda line: (line[1], line[0]))
+    predictionRDD = predictions.select(['label', 'prediction']).rdd.map(lambda line: (line[1], line[0]))
     metrics = MulticlassMetrics(predictionRDD)
     
 
@@ -207,6 +207,7 @@ def AssembleFeatures(df, categorical_features, numeric_features, target_label = 
     assemblerInputs = [c + "_Vector" for c in categorical_features] + numeric_features
     assembler = VectorAssembler(inputCols=assemblerInputs, outputCol="features")
     if target_label:
+        #return assembler.transform(df).withColumnRenamed(target_label, 'target').drop(*(numeric_features + [c + '_Vector' for c in categorical_features]))
         return assembler.transform(df).withColumnRenamed(target_label, 'label' if target_is_categorical else 'target').drop(*(numeric_features + [c + '_Vector' for c in categorical_features]))
     return assembler.transform(df).drop(*(numeric_features + [c + '_Vector' for c in categorical_features]))
     
@@ -216,7 +217,8 @@ def MakeMLDataFrame(df, categorical_features, numeric_features, target_label = N
        if target_is_categorical: 
            df1 = StringIndexEncode(df0, categorical_features + [target_label])
            df2 = OneHotEncode(df1, categorical_features)
-           df3 =  AssembleFeatures(df2, categorical_features, numeric_features, target_label + '_Index').select('features', 'label')
+           df3 =  AssembleFeatures(df2, categorical_features, numeric_features, target_label + '_Index', True) #.select('features', 'label')
+           print(df3.columns)
        else:
            df1 = StringIndexEncode(df0, categorical_features)
            df2 = OneHotEncode(df1, categorical_features)
@@ -225,7 +227,7 @@ def MakeMLDataFrame(df, categorical_features, numeric_features, target_label = N
        df0 = df.select(categorical_features + numeric_features)
        df1 = StringIndexEncode(df0, categorical_features)
        df2 = OneHotEncode(df1, categorical_features)
-       df3 =  AssembleFeatures(df2, categorical_features, numeric_features)
+       df3 =  AssembleFeatures(df2, categorical_features, numeric_features).select('features')
     return df3
 
 #def fix_categorical_data(df, categorical_features, target_col, numeric_features = []):
@@ -251,7 +253,7 @@ def MakeMLDataFramePipeline(df, categorical_features, numeric_features, target_l
 
     pipeline = Pipeline(stages = stages)
 
-    dfML = pipeline.fit(df).transform(df)
+    dfML = pipeline.fit(df).transform(df).select(['label', 'features'])
     #dfx = dfx.select(['label', 'features'] + cols)
     #catindexes = {x.getOutputCol() : x.labels for x in dfML.stages if isinstance(x, StringIndexerModel)}
     return dfML 
