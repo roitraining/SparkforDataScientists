@@ -26,8 +26,9 @@ def initspark(appname = "Test", servername = "local", cassandra="127.0.0.1", mon
     print ('pyspark initialized')
     return sc, spark, conf
 
-if __name__ == '__main__':
-    sc, spark, conf = initspark()
+def display(df, limit = 10):
+    from IPython.display import display    
+    display(df.limit(limit).toPandas())
 
 def drop_columns(df, collist):
     return df.select([c for c in df.columns if c not in collist])
@@ -36,12 +37,16 @@ def auto_numeric_features(df, exceptlist = ()):
     numeric_features = [t[0] for t in df.dtypes if t[0] not in exceptlist and t[1] in ['int', 'double']]
     return numeric_features
 
-def auto_categorical_features(df):
-    categorical_features = [c for c in df.columns if c.endswith('_ID') or c.endswith('_FLAG')]
+def auto_categorical_features(df, suffix = ('ID', 'CODE', 'FLAG'), exceptlist = ()):
+    if suffix:
+        categorical_features = [c for c in df.columns if c not in exceptlist and c.upper().endswith(tuple(map(str.upper, suffix)))]
+    else:
+        categorical_features = [t[0] for t in df.dtypes if t[0] not in exceptlist and t[1] not in ['int', 'double']]
+
     return categorical_features
 
 def describe_numeric_features(df, numeric_features):
-    print(df.select(numeric_features).describe().toPandas())
+    return df.select(numeric_features).describe()
 
 def scatter_matrix(df, numeric_features):
     import pandas as pd
@@ -56,32 +61,6 @@ def scatter_matrix(df, numeric_features):
         h = axs[n-1, i]
         h.xaxis.label.set_rotation(90)
         h.set_xticks(())
-
-def fix_categorical_data(df, categorical_features, target_col, numeric_features = []):
-    from pyspark.ml.feature import OneHotEncoderEstimator, StringIndexer, VectorAssembler, StringIndexerModel
-    from pyspark.ml import Pipeline
-
-    stages = []
-
-    for c in categorical_features:
-        stringIndexer = StringIndexer(inputCol = c, outputCol = c + '_Index')
-        encoder = OneHotEncoderEstimator(inputCols=[stringIndexer.getOutputCol()], outputCols=[c + "_classVec"])
-        stages += [stringIndexer, encoder]
-
-    label_stringIdx = StringIndexer(inputCol = target_col, outputCol = 'label')
-    stages += [label_stringIdx]
-
-    assemblerInputs = [c + "_classVec" for c in categorical_features] + numeric_features
-    assembler = VectorAssembler(inputCols=assemblerInputs, outputCol="features")
-    stages += [assembler]
-
-    cols = df.columns
-    pipeline = Pipeline(stages = stages)
-    pipelineModel = pipeline.fit(df)
-    dfx = pipelineModel.transform(df)
-    dfx = dfx.select(['label', 'features'] + cols)
-    catindexes = {x.getOutputCol() : x.labels for x in pipelineModel.stages if isinstance(x, StringIndexerModel)}
-    return dfx, catindexes
 
 def beta_coefficients(model):
     import matplotlib.pyplot as plt
@@ -118,8 +97,8 @@ def evaluate_ROC(predictions):
 
 def show_predictions(predictions, limit = 20):
     print('Test Area Under ROC {}'.format(evaluate_ROC(predictions)))
-    predictions.groupBy('prediction').count().show()
     predictions.select('label', 'rawPrediction', 'prediction', 'probability').show(limit)
+    predictions.groupBy('prediction').count().show()
 
 def collect_tuple(df):
     return [tuple(row) if len(tuple(row)) > 1 else tuple(row)[0] for row in df.collect()]
@@ -129,7 +108,10 @@ def collect_dict(df):
 
 def cm_percent(cm, length, legend = True):
     import numpy as np
-    x = np.ndarray(shape = (2,2),                       buffer = np.array([100 *(cm[0][0] + cm[1][1])/length,                       100 * cm[0][1]/length, 100 * cm[1][0]/length,                       100 * (cm[1][0] + cm[0][1])/length]))
+    x = np.ndarray(shape = (2,2), \
+                      buffer = np.array([100 *(cm[0][0] + cm[1][1])/length, \
+                      100 * cm[0][1]/length, 100 * cm[1][0]/length, \
+                      100 * (cm[1][0] + cm[0][1])/length]))
     return x
 
 def evaluate_model(model):
@@ -159,7 +141,7 @@ def evaluate_predictions(predictions, show = True):
     log['aupr'] = evaluator.evaluate(predictions)
 
     # Metrics
-    predictionRDD = predictions.select(['label', 'prediction'])                    .rdd.map(lambda line: (line[1], line[0]))
+    predictionRDD = predictions.select(['label', 'prediction']).rdd.map(lambda line: (line[1], line[0]))
     metrics = MulticlassMetrics(predictionRDD)
     
 
@@ -183,6 +165,12 @@ def evaluate_predictions(predictions, show = True):
     if show:
         show_predictions(predictions)
 
+        print ('Confusion Matrix')
+        print (' TP', 'FN\n', 'FP', 'TN')
+        print (log['cm'])
+        print (' PC', 'FN\n', 'FP', 'PW')
+        print (log['cmpercent'])
+        print ('')
         print("Area under ROC = {}".format(log['auroc']))
         print("Area under AUPR = {}".format(log['aupr']))
         print('\nOverall\ntprecision = {}\nrecall = {}\nF1 Measure = {}\n'.format( 
@@ -191,27 +179,29 @@ def evaluate_predictions(predictions, show = True):
         for x in sorted(distinctPredictions):
             print('Label {}\ntprecision = {}\nrecall = {}\nF1 Measure = {}\n'.format( 
                   x, log[x]['precision'], log[x]['recall'], log[x]['F1 Measure']))
-        
-        print ('Confusion Matrix')
-        print (log['cm'])
-        print (' PC', 'FP\n', 'FN', 'PW')
-        print (log['cmpercent'])
 
     return log    
 
-def predict_and_evaluate(model, test, show = True):
+def predict_and_evaluate(model, test, show = True, showModel = True):
     predictions = model.transform(test)
-    if show:
+    if showModel:
         evaluate_model(model)
     log = evaluate_predictions(predictions, show)
     return (predictions, log)
 
-def StringIndexEncode(df, columns):
+def StringIndexEncode(df, columns, return_key_dict = False):
     from pyspark.ml.feature import StringIndexer
     df1 = df
+    keydict = {}
     for col in columns:
         indexer = StringIndexer(inputCol = col, outputCol = col+'_Index')
-        df1 = indexer.fit(df1).transform(df1).drop(col) 
+        df1 = indexer.fit(df1).transform(df1)
+        if return_key_dict:
+           keydict[col] = dict(list(map(tuple, df1.select(col, col + '_Index').distinct().collect())))
+        df1 = df1.drop(col) 
+
+    if return_key_dict and len(keydict) > 0:
+       return df1, keydict
     return df1
 
 def OneHotEncode(df, columns):
@@ -220,6 +210,7 @@ def OneHotEncode(df, columns):
     for col in columns:
         encoder = OneHotEncoderEstimator(inputCols=[col + '_Index'], outputCols=[col+'_Vector'])
         df1 = encoder.fit(df1).transform(df1).drop(col + '_Index')
+    print('---> ', type(df1[col+'_Vector']), df1.columns, df1.take(1))
     return df1
 
 def AssembleFeatures(df, categorical_features, numeric_features, target_label = None, target_is_categorical = True):
@@ -231,21 +222,101 @@ def AssembleFeatures(df, categorical_features, numeric_features, target_label = 
         return assembler.transform(df).withColumnRenamed(target_label, 'label' if target_is_categorical else 'target').drop(*(numeric_features + [c + '_Vector' for c in categorical_features]))
     return assembler.transform(df).drop(*(numeric_features + [c + '_Vector' for c in categorical_features]))
     
-def MakeMLDataFrame(df, categorical_features, numeric_features, target_label = None, target_is_categorical = True):
-    if target_is_categorical:
-       df1 = StringIndexEncode(df, categorical_features + [target_label])
-       df2 = OneHotEncode(df1, categorical_features)
-       df3 =  AssembleFeatures(df2, categorical_features, numeric_features, target_label + '_Index')
-    elif target_label:
-       df1 = StringIndexEncode(df, categorical_features)
-       df2 = OneHotEncode(df1, categorical_features)
-       df3 =  AssembleFeatures(df2, categorical_features, numeric_features, target_label, False)
+def MakeMLDataFrame(df, categorical_features, numeric_features, target_label = None, target_is_categorical = True, return_key_dict = False):
+    if target_label:
+       df0 = df.select(categorical_features + numeric_features + [target_label])
+       if target_is_categorical: 
+           df1 = StringIndexEncode(df0, categorical_features + [target_label], return_key_dict = return_key_dict)
+           if type(df1) is tuple:
+               keydict = df1[1]
+               df1 = df1[0]
+           df2 = OneHotEncode(df1, categorical_features)
+           df3 = AssembleFeatures(df2, categorical_features, numeric_features, target_label + '_Index', target_is_categorical = True) #.select('features', 'label')
+       else:
+           df1 = StringIndexEncode(df0, categorical_features, return_key_dict = return_key_dict)
+           if type(df1) is tuple:
+               keydict = df1[1]
+               df1 = df1[0]
+           df2 = OneHotEncode(df1, categorical_features)
+           df3 = AssembleFeatures(df2, categorical_features, numeric_features, target_label, target_is_categorical = False).select('features', 'target')
     else:
-       df1 = StringIndexEncode(df, categorical_features)
+       df0 = df.select(categorical_features + numeric_features)
+       df1 = StringIndexEncode(df0, categorical_features, return_key_dict = return_key_dict)
+#       if skip_string_indexer:
+#           df1 = df0
+#           for col in categorical_features:
+#               df1 = df1.withColumnRenamed(col, col + '_Index')
+#           print('** df1 columns', df1.columns)
+#       else:
+       if type(df1) is tuple:
+           keydict = df1[1]
+           df1 = df1[0]
        df2 = OneHotEncode(df1, categorical_features)
-       df3 =  AssembleFeatures(df2, categorical_features, numeric_features)
+       df3 = AssembleFeatures(df2, categorical_features, numeric_features).select('features')
+    if return_key_dict and len(keydict) > 0:
+        return (df3, keydict)
     return df3
 
-def display(df, limit = 10):
-    from IPython.display import display    
-    display(df.limit(limit).toPandas())
+def MakeMLDataFramePipeline(df, categorical_features, numeric_features, target_label = None, target_is_categorical = True):
+    from pyspark.ml.feature import OneHotEncoderEstimator, StringIndexer, VectorAssembler, StringIndexerModel
+    from pyspark.ml import Pipeline
+
+    stages = []
+
+    for c in categorical_features:
+        stringIndexer = StringIndexer(inputCol = c, outputCol = c + '_Index')
+        encoder = OneHotEncoderEstimator(inputCols=[stringIndexer.getOutputCol()], outputCols=[c + "_classVec"])
+        stages += [stringIndexer, encoder]
+        
+    if target_is_categorical:
+        label_stringIdx = StringIndexer(inputCol = target_label, outputCol = 'label')
+        stages += [label_stringIdx]
+
+    assemblerInputs = [c + "_classVec" for c in categorical_features] + numeric_features
+    assembler = VectorAssembler(inputCols=assemblerInputs, outputCol="features")
+    stages += [assembler]
+
+    pipeline = Pipeline(stages = stages)
+
+    dfML = pipeline.fit(df).transform(df).select(['label', 'features'])
+    #dfx = dfx.select(['label', 'features'] + cols)
+    #catindexes = {x.getOutputCol() : x.labels for x in dfML.stages if isinstance(x, StringIndexerModel)}
+    return dfML 
+
+def evaluateCluster(model, df):
+    from pyspark.ml.clustering import KMeans
+    from pyspark.ml.evaluation import ClusteringEvaluator
+    wssse = model.computeCost(dfML.select('features'))
+    print("Within Set Sum of Squared Errors = " + str(wssse))
+
+    evaluator = ClusteringEvaluator()
+
+    predictions = model.transform(df)
+    silhouette = evaluator.evaluate(predictions)
+    print("Silhouette with squared euclidean distance = " + str(silhouette))
+
+    # Shows the result.
+    centers = model.clusterCenters()
+    print("Cluster Centers: ")
+    for center in centers:
+        print(center)
+
+def plot_elbow(df, cluster_cnt = 10):
+    import matplotlib as mp
+    from matplotlib import pyplot as plt
+    from pyspark.ml.clustering import KMeans
+    from pyspark.ml.evaluation import ClusteringEvaluator
+    import numpy as np
+    CLUSTERS = range(2, cluster_cnt)
+    scores = [KMeans().setK(c).setSeed(1).fit(df).computeCost(df)
+              for c in CLUSTERS]
+    print(scores)
+    plt.plot(CLUSTERS, scores)
+    plt.xlabel('Number of Clusters')
+    plt.ylabel('Score')
+    plt.title('Elbow Curve')
+    plt.xticks(np.arange(2, cluster_cnt))
+
+if __name__ == '__main__':
+    sc, spark, conf = initspark()
+
